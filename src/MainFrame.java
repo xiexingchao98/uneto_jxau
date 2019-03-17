@@ -5,6 +5,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileReader;
@@ -28,6 +29,9 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
+
 public class MainFrame extends JFrame implements ActionListener{
 	final int MAC_LENGTH = 12;
 	final String MAC_PREFIX = "AAAAAA";
@@ -36,10 +40,11 @@ public class MainFrame extends JFrame implements ActionListener{
     final String REG_DELETE = "reg delete HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e972-e325-11ce-bfc1-08002be10318}\\0005 /v NetworkAddress /f";
 	final String[] DEVICE_TYPE = {"Windows", "Android", "iOS"};
 	final String[] MAC_MODE_TYPE = {"自定义", "使用现有配置"};
-	final String configFilePath = System.getProperty("user.dir") + "/config";
-	Map<String, String> configMap = new HashMap<String, String>();
-	static StringBuilder logBuffer = new StringBuilder();
-	StringBuilder macBuilder = new StringBuilder();
+	final String configPath = System.getProperty("user.dir") + "/config.json";
+	JSONObject config = new JSONObject();
+	JSONObject device;
+	boolean isDeviceConfigExist = true;
+	StringBuilder macBuilder = new StringBuilder();	
 	
 	JMenuBar menuBar;
 	JMenu mainMenu;
@@ -48,6 +53,9 @@ public class MainFrame extends JFrame implements ActionListener{
 	FlowLayout defaultFlow;
 	
 	JPanel modePanel;
+	JPanel modeCustomPanel;
+	JPanel modeUseConfigPanel;
+	JPanel modeBtnGroupPanel;
     JLabel modeLabel;
     JComboBox modeBox;
     
@@ -64,11 +72,6 @@ public class MainFrame extends JFrame implements ActionListener{
     JButton login;
     JButton logout;
     
-    JPanel logPanel;
-    JScrollPane logScrollPane;
-    JLabel logLabel;
-    JTextArea logArea;
-    
     MainFrame() {
     	readConfig();
     	
@@ -83,9 +86,9 @@ public class MainFrame extends JFrame implements ActionListener{
     void initComponent() {
         menuBar = new JMenuBar();
         
-        mainMenu = new JMenu("菜单");
+        mainMenu = new JMenu("主菜单");
         menuBar.add(mainMenu);
-        openConfigFile = new JMenuItem("打开配置文件");
+        openConfigFile = new JMenuItem("打开配置文件目录");
         openConfigFile.setActionCommand("openConfigFile");
         openConfigFile.addActionListener(this);
         
@@ -96,6 +99,7 @@ public class MainFrame extends JFrame implements ActionListener{
         defaultFlow = new FlowLayout(FlowLayout.LEFT);
         
         modePanel = new JPanel(defaultFlow);
+
         
         modeLabel = new JLabel("MAC模式");
         modeBox = new JComboBox(MAC_MODE_TYPE);
@@ -104,22 +108,41 @@ public class MainFrame extends JFrame implements ActionListener{
         modePanel.add(modeLabel);
         modePanel.add(modeBox);
         this.add(modePanel);
-        
-        macBox = new JComboBox();
-        if (configMap.containsKey("mac_android") && configMap.get("mac_android") != null) {
-            macBox.addItem("Android -> " + configMap.get("mac_android"));        	
-        }
-        if (configMap.containsKey("mac_ios") && configMap.get("mac_ios") != null) {
-            macBox.addItem("iOS -> " + configMap.get("mac_ios"));        	
-        }
-        if (macBox.getItemCount() == 0) {
-        	macBox.addItem("没有找到配置信息");
-        }
+
         macLabel = new JLabel("MAC地址");
         macField = new JTextField(12);
         random = new JButton("生成地址");
         random.setActionCommand("getRandomMac");
         random.addActionListener(this);
+        modeCustomPanel = new JPanel(defaultFlow);
+        modeCustomPanel.add(macLabel);
+        modeCustomPanel.add(macField);
+        modeCustomPanel.add(random);
+        
+        modePanel.add(modeCustomPanel);
+        
+        macBox = new JComboBox();
+        modeUseConfigPanel = new JPanel(defaultFlow);
+        modeUseConfigPanel.add(macBox);
+        
+        device = config.getJSONObject("device");
+        if (device != null) {
+        	String tmp = "";
+        	for (String key : device.keySet()) {
+        		tmp = device.getString(key);
+        		if (tmp.equals("") || tmp == null ) {
+        			continue;
+        		}
+        		else {
+                	macBox.addItem(key);
+        		}
+        	}
+        	if (macBox.getItemCount() == 0) {
+        		isDeviceConfigExist = false;
+        		macBox.addItem("暂无配置信息");
+        	}
+        }
+
         
         apply = new JButton("应用");
         apply.setActionCommand("applySetting");
@@ -127,13 +150,11 @@ public class MainFrame extends JFrame implements ActionListener{
         reset = new JButton("重置");
         reset.setActionCommand("resetSetting");
         reset.addActionListener(this);
-        
-		modePanel.add(macLabel);
-		modePanel.add(macField);
-		modePanel.add(random);
+		modeBtnGroupPanel = new JPanel(defaultFlow);
+		modeBtnGroupPanel.add(apply);
+		modeBtnGroupPanel.add(reset);
 		
-		modePanel.add(apply);
-		modePanel.add(reset);
+		modePanel.add(modeBtnGroupPanel);
         
         netPanel = new JPanel(defaultFlow);
         deviceLabel = new JLabel("设备类型");
@@ -152,38 +173,20 @@ public class MainFrame extends JFrame implements ActionListener{
         
         this.add(netPanel);
         
-        logPanel = new JPanel(defaultFlow);
-        logLabel = new JLabel("日志：");
-        logArea = new JTextArea(5, 30);
-        logScrollPane = new JScrollPane(logArea);
-        
-        logPanel.add(logLabel);
-        logPanel.add(logScrollPane);
-        
-        this.add(logPanel);
-        
         modeBox.addActionListener(new ActionListener() {
 
 			@Override
 			public void actionPerformed(ActionEvent e) {
 				// TODO Auto-generated method stub
 				if (modeBox.getSelectedIndex() == 0) {
-					modePanel.remove(macBox);
-					modePanel.add(macLabel);
-					modePanel.add(macField);
-					modePanel.add(random);
-					modePanel.add(apply);
-					modePanel.add(reset);
+					modePanel.remove(modeUseConfigPanel);
+					modePanel.add(modeCustomPanel);
+					modePanel.add(modeBtnGroupPanel);
 				}
 				else {
-					modePanel.remove(macLabel);
-					modePanel.remove(macField);
-					modePanel.remove(random);
-					modePanel.remove(apply);
-					modePanel.remove(reset);
-					modePanel.add(macBox);
-					modePanel.add(apply);
-					modePanel.add(reset);
+					modePanel.remove(modeCustomPanel);
+					modePanel.add(modeUseConfigPanel);
+					modePanel.add(modeBtnGroupPanel);
 				}
 				modePanel.updateUI();
 			}
@@ -199,21 +202,11 @@ public class MainFrame extends JFrame implements ActionListener{
     }
 
     void readConfig() {
-    	File config = new File(System.getProperty("user.dir") + "/config");
+    	File file = new File(configPath);
     	String tmp = null;
-    	try (BufferedReader reader = new BufferedReader(new FileReader(config));)
+    	try (FileInputStream fis = new FileInputStream(file))
     	{
-    		while ( (tmp = reader.readLine()) != null) {
-    			String[] pair = tmp.split("=");
-    			// 参数值不为空，读取并设置其值
-    			if (pair.length > 1) {
-        			configMap.put(pair[0], pair[1]);    				
-    			}
-    			// 参数值为空，则将其值设置为null
-    			else {
-    				configMap.put(pair[0], null);
-    			}
-    		}
+    		config = JSONObject.parseObject(new String(fis.readAllBytes(), "utf-8"));
     	} catch (FileNotFoundException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -250,12 +243,12 @@ public class MainFrame extends JFrame implements ActionListener{
 				break;
 			default:
 		}
-		logArea.setText(logBuffer.toString());
 	}
 	
-	private void runCommand(String command) {
+	private String runCommand(String command) {
 		Runtime run = Runtime.getRuntime();
 		String input = "";
+		int exitCode = 0;
 		try {
 			Process process = run.exec(command);
 			try (InputStream is = process.getInputStream(); InputStream is2 = process.getErrorStream()) {
@@ -268,13 +261,23 @@ public class MainFrame extends JFrame implements ActionListener{
 			catch (IOException e) {
 				throw e;
 			}
+			exitCode = process.exitValue();
 			process.destroy();
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
-		MainFrame.logBuffer.append(input + "\t\n");
 		
+		JSONObject response = new JSONObject();
+		
+		if (exitCode == 0) {
+			response.put("result", "success");
+		}
+		else {
+			response.put("result", "fail");			
+		}
+		response.put("message", input);
+		return response.toJSONString();
 	}
 	
 	private void openConfigFile() {
@@ -291,29 +294,65 @@ public class MainFrame extends JFrame implements ActionListener{
 	private void applySetting() {
 		String mac = "";
 		String mode = modeBox.getSelectedItem().toString();
+		boolean isDataCorrect = false;
 		switch (mode) {
 			case "自定义":
 				mac = macField.getText();
+				if (mac.equals("")) {
+					promptDialog("{'result':'fail','message':'请输入正确的mac地址'}");
+				}
+				else {
+					isDataCorrect = true;
+				}
 				break;
 			case "使用现有配置":
-				if (macBox.getSelectedIndex() == 0) {
-					mac = configMap.get("mac_android");
-					break;
+				if (isDeviceConfigExist) {
+					isDataCorrect = true;
+					mac = device.getString((String) macBox.getSelectedItem());
 				}
-				mac = configMap.get("mac_ios");					
+				else {
+					JSONObject modalInfo = new JSONObject();
+					promptDialog("{'result':'fail','message':'请检查配置文件'}");
+				}
 				break;
 				default:
 		}
-		runCommand("cmd /c " + REG_ADD.replace("{mac}", mac));
+		if (isDataCorrect) {
+			String dialogInfo = runCommand("cmd /c " + REG_ADD.replace("{mac}", mac));
+			promptDialog(dialogInfo);					
+		}
 	}
 	private void resetSetting() {
-		runCommand("cmd /c " + REG_DELETE);
-		
+		String dialogInfo = runCommand("cmd /c " + REG_DELETE);
+		promptDialog(dialogInfo);
 	}
 	private void doLogin() {
-		AuthInterface.login(configMap.get("user"), configMap.get("password"), deviceBox.getSelectedItem().toString());
+		String dialogInfo = AuthInterface.login(config.getString("user"), config.getString("password"), deviceBox.getSelectedItem().toString());
+		promptDialog(dialogInfo);
 	}
 	private void doLogout() {
-		AuthInterface.logout();
+		promptDialog(AuthInterface.logout());
+	}
+	
+	private void promptDialog(JSONObject response) {
+		String result;
+		String message;
+		int messageType;
+		
+		result = response.getString("result");
+		
+		if (result.equals("fail")) {
+			messageType = JOptionPane.ERROR_MESSAGE;
+			message = "操作失败 -> 返回信息：";
+		}
+		else {
+			messageType = JOptionPane.INFORMATION_MESSAGE;
+			message = "操作成功 -> 返回信息：";
+		}
+		message += response.getString("message");
+		JOptionPane.showMessageDialog(this, message, "提示", messageType);
+	}
+	private void promptDialog(String data) {
+		promptDialog(JSONObject.parseObject(data));
 	}
 } 
